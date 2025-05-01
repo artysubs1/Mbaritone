@@ -37,7 +37,7 @@ public final class DefaultCommands {
                 new GoalCommand(baritone),
                 new GotoCommand(baritone),
                 new MGotoCommand(baritone),
-			new PathCommand(baritone),
+		new PathCommand(baritone),
                 new ProcCommand(baritone),
                 new ETACommand(baritone),
                 new VersionCommand(baritone),
