@@ -1,97 +1,115 @@
 package baritone.command.defaults;
 
-import baritone.api.BaritoneAPI;
+import baritone.api.command.Command;
+import baritone.api.command.argument.IArgConsumer;
+import baritone.api.utils.Helper;
+import baritone.api.pathing.goals.GoalBlock;
 import baritone.api.pathing.goals.GoalXZ;
 import baritone.api.IBaritone;
-import baritone.api.command.Command;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.player.Player;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.monster.Monster;
-import net.minecraft.world.phys.Box;
-
 import java.util.List;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 
+/**
+ * Custom mgoto command for Baritone 1.21.3.
+ * Goes to X/Z coordinates, pausing to kill all hostile mobs in a 100-block radius.
+ */
 public class MGotoCommand extends Command {
-
-    public MGotoCommand() {
-        super("mgoto", "Vai para uma posição X/Z, atacando mobs hostis (Monster) no raio de 100 blocos.");
+    public MGotoCommand(IBaritone baritone) {
+        // Register command name "mgoto"
+        super(baritone, "mgoto");
     }
 
     @Override
-    public void execute(String label, String[] args) {
-        if (args.length < 3) {
-            logDirect("Uso: mgoto <x> <z>");
-            return;
-        }
-        // Parse coordenadas de destino (X, Z)
-        double targetX = Double.parseDouble(args[1]);
-        double targetZ = Double.parseDouble(args[2]);
+    public void execute(String label, IArgConsumer args) {
+        // Require exactly two arguments: x and z coordinates
+        args.requireExactly(2);
+        // Parse coordinates
+        int x = args.getAs(Integer.class);
+        int z = args.getAs(Integer.class);
 
-        // Obtém instância do Baritone e do jogador/mundo do Minecraft
-        IBaritone baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
-        MinecraftClient mc = MinecraftClient.getInstance();
-        Player player = mc.player;
-        if (player == null || mc.level == null) {
-            logDirect("Mundo não carregado ou jogador nulo.");
-            return;
-        }
+        // Set primary goal to the given X/Z coordinates (long-range, Y unspecified)
+        baritone.getCustomGoalProcess().setGoalAndPath(new GoalXZ(x, z));
 
-        // Atualização: Cancela quaisquer caminhos/processos anteriores antes de definir novo objetivo
-        baritone.getPathingBehavior().cancelEverything();
+        // Start a new thread to monitor and chase nearby hostile mobs
+        new Thread(() -> {
+            try {
+                while (true) {
+                    // Get player and world instances
+                    var world = Helper.mc.world;
+                    var player = Helper.mc.player;
+                    if (world == null || player == null) {
+                        // If world or player not loaded, wait and retry
+                        Thread.sleep(100);
+                        continue;
+                    }
 
-        // Define objetivo principal (coordenadas X/Z)
-        baritone.getCustomGoalProcess().setGoalAndPath(new GoalXZ(targetX, targetZ));
+                    // Find all hostile mobs within 100 blocks
+                    List<Monster> hostiles = new ArrayList<>();
+                    for (Entity e : world.getEntities()) {
+                        if (e instanceof Monster mob) {
+                            double distance = mob.distanceTo(player);
+                            if (distance <= 100.0) {
+                                hostiles.add(mob);
+                            }
+                        }
+                    }
 
-        // Loop para monitorar mobs hostis enquanto o bot caminha
-        // (Em prática, isso deveria rodar em outra thread/async no mod real, este é apenas exemplo)
-        while (!baritone.getPathingBehavior().isPathingPaused()) {
-            // Cria caixa de busca ao redor do jogador com raio de 100 blocos em cada direção
-            double px = player.getX();
-            double py = player.getY();
-            double pz = player.getZ();
-            Box searchBox = new Box(px - 100, py - 100, pz - 100, px + 100, py + 100, pz + 100);
+                    if (!hostiles.isEmpty()) {
+                        // Sort by distance to find nearest first
+                        Collections.sort(hostiles, Comparator.comparingDouble(m -> m.distanceTo(player)));
+                        for (Monster target : hostiles) {
+                            // Skip if target already dead or out of range
+                            if (!target.isAlive() || target.distanceTo(player) > 100.0) continue;
 
-            // Atualização: Em 1.21 use getEntitiesOfClass para listar entidades
-            List<LivingEntity> hostiles = mc.level.getEntitiesOfClass(
-                    LivingEntity.class,
-                    searchBox,
-                    e -> (e instanceof Monster) && e.isAlive() // Filtra entidades tipo Monster vivas
-            );
+                            // Cancel current path and chase this target
+                            baritone.getPathingBehavior().cancelEverything();
+                            BlockPos targetPos = target.blockPosition();
+                            baritone.getCustomGoalProcess().setGoalAndPath(new GoalBlock(targetPos.getX(), targetPos.getY(), targetPos.getZ()));
 
-            // Se encontrou algum mob hostil, direciona o Baritone para atacá-lo
-            if (!hostiles.isEmpty()) {
-                // Escolhe um alvo (por exemplo, o primeiro da lista ou o mais próximo)
-                LivingEntity alvo = hostiles.get(0);
-                // Opcional: poderia selecionar o mais próximo via distanceTo
-
-                // Atualização: Cancele qualquer caminho antes de ir ao mob
-                baritone.getPathingBehavior().cancelEverything();
-
-                // Novo objetivo: mover até as coordenadas do mob
-                baritone.getCustomGoalProcess().setGoalAndPath(new GoalXZ(alvo.getX(), alvo.getZ()));
-
-                // Espera até que o mob seja eliminado (isAlive == false)
-                // (Em código real, cuidado com loops bloqueantes; aqui simplificado)
-                while (alvo.isAlive()) {
-                    try {
-                        Thread.sleep(50);
-                    } catch (InterruptedException e) {
-                        // Tratar interrupção adequadamente em código real
+                            // Wait until the target is dead or out of range
+                            while (target.isAlive() && player.distanceTo(target) <= 100.0) {
+                                // Update goal if target has moved
+                                BlockPos newPos = target.blockPosition();
+                                if (!newPos.equals(targetPos)) {
+                                    targetPos = newPos;
+                                    baritone.getCustomGoalProcess().setGoalAndPath(new GoalBlock(targetPos.getX(), targetPos.getY(), targetPos.getZ()));
+                                }
+                                // Sleep briefly
+                                Thread.sleep(100);
+                            }
+                        }
+                        // After killing all detected mobs, restore original goal
+                        baritone.getCustomGoalProcess().setGoalAndPath(new GoalXZ(x, z));
+                    } else {
+                        // No mobs detected, sleep before checking again
+                        Thread.sleep(500);
                     }
                 }
-
-                // Após matar o mob, voltar ao objetivo original
-                baritone.getPathingBehavior().cancelEverything();
-                baritone.getCustomGoalProcess().setGoalAndPath(new GoalXZ(targetX, targetZ));
+            } catch (InterruptedException ignored) {
+                // Thread interrupted; exit
             }
+        }).start();
+    }
 
-            // Breve pausa para evitar sobrecarga do loop (simulação de atualização do tick)
-            try {
-                Thread.sleep(100);
-            } catch (InterruptedException e) {
-                break;
-            }
-        }
+    @Override
+    public java.util.List<String> tabComplete(String label, IArgConsumer args) {
+        // No tab completion needed for coordinates
+        return Collections.emptyList();
+    }
+
+    @Override
+    public String getShortDesc() {
+        return "Move to XZ coordinates, killing hostiles within 100 blocks.";
+    }
+
+    @Override
+    public String getLongDesc() {
+        return "Usage: #mgoto <x> <z> - path to X/Z, pausing to chase and kill hostile mobs within 100 block radius.";
     }
 }
