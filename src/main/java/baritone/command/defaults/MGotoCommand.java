@@ -42,7 +42,7 @@ public class MGotoCommand extends Command {
             try {
                 while (true) {
                     // Get player and world instances
-                    var world = Helper.mc.world;
+                    var world = Helper.mc.level;
                     var player = Helper.mc.player;
                     if (world == null || player == null) {
                         // If world or player not loaded, wait and retry
