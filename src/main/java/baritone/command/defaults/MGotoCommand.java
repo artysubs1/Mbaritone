@@ -98,10 +98,9 @@ public class MGotoCommand extends Command {
     }
 
     @Override
-    public java.util.List<String> tabComplete(String label, IArgConsumer args) {
-        // No tab completion needed for coordinates
-        return Collections.emptyList();
-    }
+public Stream<String> tabComplete(String label, IArgConsumer args) {
+    return Stream.of();
+}
 
     @Override
     public String getShortDesc() {
@@ -109,7 +108,7 @@ public class MGotoCommand extends Command {
     }
 
     @Override
-    public String getLongDesc() {
-        return "Usage: #mgoto <x> <z> - path to X/Z, pausing to chase and kill hostile mobs within 100 block radius.";
+    public List<String> getLongDesc() {
+        return List.of("Usage: #mgoto <x> <z> - path to X/Z, pausing to chase and kill hostile mobs within 100 block radius.");
     }
 }
